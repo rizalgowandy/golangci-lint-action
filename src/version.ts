@@ -1,7 +1,10 @@
 import * as core from "@actions/core"
 import * as httpm from "@actions/http-client"
 import * as fs from "fs"
+import os from "os"
 import path from "path"
+
+import { InstallMode } from "./install"
 
 // TODO: make a class
 export type Version = {
@@ -15,8 +18,10 @@ const modVersionRe = /github.com\/golangci\/golangci-lint\s(v.+)/
 
 const parseVersion = (s: string): Version => {
   if (s == "latest" || s == "") {
+    // TODO(ldez): it should be replaced with an explicit version (ex: v1.64.0)
     return null
   }
+
   const match = s.match(versionRe)
   if (!match) {
     throw new Error(`invalid version string '${s}', expected format v1.2 or v1.2.3`)
@@ -36,6 +41,7 @@ export const stringifyVersion = (v: Version): string => {
   return `v${v.major}.${v.minor}${v.patch !== null ? `.${v.patch}` : ``}`
 }
 
+// TODO(ldez): it should be updated to v2.0.0.
 const minVersion = {
   major: 1,
   minor: 28,
@@ -61,6 +67,7 @@ const isLessVersion = (a: Version, b: Version): boolean => {
 const getRequestedLintVersion = (): Version => {
   let requestedLintVersion = core.getInput(`version`)
   const workingDirectory = core.getInput(`working-directory`)
+
   let goMod = "go.mod"
   if (workingDirectory) {
     goMod = path.join(workingDirectory, goMod)
@@ -79,6 +86,7 @@ const getRequestedLintVersion = (): Version => {
   if (parsedRequestedLintVersion == null) {
     return null
   }
+
   if (isLessVersion(parsedRequestedLintVersion, minVersion)) {
     throw new Error(
       `requested golangci-lint version '${requestedLintVersion}' isn't supported: we support only ${stringifyVersion(
@@ -86,6 +94,7 @@ const getRequestedLintVersion = (): Version => {
       )} and later versions`
     )
   }
+
   return parsedRequestedLintVersion
 }
 
@@ -107,7 +116,8 @@ const getConfig = async (): Promise<Config> => {
     maxRetries: 5,
   })
   try {
-    const url = `https://raw.githubusercontent.com/golangci/golangci-lint/master/assets/github-action-config.json`
+    // TODO(ldez): HEAD should be replaced with an explicit version (ex: v1.64.0).
+    const url = `https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/assets/github-action-config-v1.json`
     const response: httpm.HttpClientResponse = await http.get(url)
     if (response.message.statusCode !== 200) {
       throw new Error(`failed to download from "${url}". Code(${response.message.statusCode}) Message(${response.message.statusMessage})`)
@@ -120,19 +130,33 @@ const getConfig = async (): Promise<Config> => {
   }
 }
 
-export async function findLintVersion(): Promise<VersionConfig> {
+export async function findLintVersion(mode: InstallMode): Promise<VersionConfig> {
   core.info(`Finding needed golangci-lint version...`)
+
+  if (mode == InstallMode.GoInstall) {
+    const v: string = core.getInput(`version`)
+    // TODO(ldez): latest should be replaced with an explicit version (ex: v1.64.0).
+    // TODO(ldez): AssetURL should be updated for v2.
+    return { TargetVersion: v ? v : "latest", AssetURL: "github.com/golangci/golangci-lint" }
+  }
+
   const reqLintVersion = getRequestedLintVersion()
+
   // if the patched version is passed, just use it
   if (reqLintVersion?.major !== null && reqLintVersion?.minor != null && reqLintVersion?.patch !== null) {
     return new Promise((resolve) => {
+      let arch: string = "amd64"
+      if (os.arch() === "arm64") {
+        arch = "arm64"
+      }
       const versionWithoutV = `${reqLintVersion.major}.${reqLintVersion.minor}.${reqLintVersion.patch}`
       resolve({
         TargetVersion: `v${versionWithoutV}`,
-        AssetURL: `https://github.com/golangci/golangci-lint/releases/download/v${versionWithoutV}/golangci-lint-${versionWithoutV}-linux-amd64.tar.gz`,
+        AssetURL: `https://github.com/golangci/golangci-lint/releases/download/v${versionWithoutV}/golangci-lint-${versionWithoutV}-linux-${arch}.tar.gz`,
       })
     })
   }
+
   const startedAt = Date.now()
 
   const config = await getConfig()
@@ -155,5 +179,6 @@ export async function findLintVersion(): Promise<VersionConfig> {
       Date.now() - startedAt
     }ms`
   )
+
   return versionConfig
 }

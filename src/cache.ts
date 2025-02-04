@@ -20,31 +20,18 @@ function checksumFile(hashName: string, path: string): Promise<string> {
 const pathExists = async (path: string): Promise<boolean> => !!(await fs.promises.stat(path).catch(() => false))
 
 const getLintCacheDir = (): string => {
-  return path.resolve(`${process.env.HOME}/.cache/golangci-lint`)
-}
+  const home = process.platform === "win32" ? process.env.USERPROFILE : process.env.HOME
 
-const getCacheDirs = (): string[] => {
-  // Not existing dirs are ok here: it works.
-  const skipPkgCache = core.getInput(`skip-pkg-cache`, { required: true }).trim()
-  const skipBuildCache = core.getInput(`skip-build-cache`, { required: true }).trim()
-  const dirs = [getLintCacheDir()]
-
-  if (skipBuildCache.toLowerCase() == "true") {
-    core.info(`Omitting ~/.cache/go-build from cache directories`)
-  } else {
-    dirs.push(path.resolve(`${process.env.HOME}/.cache/go-build`))
-  }
-  if (skipPkgCache.toLowerCase() == "true") {
-    core.info(`Omitting ~/go/pkg from cache directories`)
-  } else {
-    dirs.push(path.resolve(`${process.env.HOME}/go/pkg`))
-  }
-
-  return dirs
+  return path.resolve(`${home}`, `.cache`, `golangci-lint`)
 }
 
 const getIntervalKey = (invalidationIntervalDays: number): string => {
   const now = new Date()
+
+  if (invalidationIntervalDays <= 0) {
+    return `${now.getTime()}`
+  }
+
   const secondsSinceEpoch = now.getTime() / 1000
   const intervalNumber = Math.floor(secondsSinceEpoch / (invalidationIntervalDays * 86400))
   return intervalNumber.toString()
@@ -52,26 +39,43 @@ const getIntervalKey = (invalidationIntervalDays: number): string => {
 
 async function buildCacheKeys(): Promise<string[]> {
   const keys = []
-  let cacheKey = `golangci-lint.cache-`
-  keys.push(cacheKey)
+
+  // Cache by OS.
+  let cacheKey = `golangci-lint.cache-${process.env?.RUNNER_OS}-`
+
+  // Get working directory from input
+  const workingDirectory = core.getInput(`working-directory`)
+
+  if (workingDirectory) {
+    cacheKey += `${workingDirectory}-`
+  }
 
   // Periodically invalidate a cache because a new code being added.
-  // TODO: configure it via inputs.
-  cacheKey += `${getIntervalKey(7)}-`
+  const invalidationIntervalDays = parseInt(core.getInput(`cache-invalidation-interval`, { required: true }).trim())
+  cacheKey += `${getIntervalKey(invalidationIntervalDays)}-`
+
   keys.push(cacheKey)
 
-  if (await pathExists(`go.mod`)) {
+  // create path to go.mod prepending the workingDirectory if it exists
+  const goModPath = path.join(workingDirectory, `go.mod`)
+
+  core.info(`Checking for go.mod: ${goModPath}`)
+
+  if (await pathExists(goModPath)) {
     // Add checksum to key to invalidate a cache when dependencies change.
-    cacheKey += await checksumFile(`sha1`, `go.mod`)
+    cacheKey += await checksumFile(`sha1`, goModPath)
   } else {
     cacheKey += `nogomod`
   }
+
   keys.push(cacheKey)
 
   return keys
 }
 
 export async function restoreCache(): Promise<void> {
+  if (core.getBooleanInput(`skip-cache`, { required: true })) return
+
   if (!utils.isValidEvent()) {
     utils.logWarning(
       `Event Validation Error: The event type ${process.env[Events.Key]} is not supported because it's not tied to a branch or tag ref.`
@@ -94,7 +98,7 @@ export async function restoreCache(): Promise<void> {
   }
   core.saveState(State.CachePrimaryKey, primaryKey)
   try {
-    const cacheKey = await cache.restoreCache(getCacheDirs(), primaryKey, restoreKeys)
+    const cacheKey = await cache.restoreCache([getLintCacheDir()], primaryKey, restoreKeys)
     if (!cacheKey) {
       core.info(`Cache not found for input keys: ${[primaryKey, ...restoreKeys].join(", ")}`)
       return
@@ -112,6 +116,9 @@ export async function restoreCache(): Promise<void> {
 }
 
 export async function saveCache(): Promise<void> {
+  if (core.getBooleanInput(`skip-cache`, { required: true })) return
+  if (core.getBooleanInput(`skip-save-cache`, { required: true })) return
+
   // Validate inputs, this can cause task failure
   if (!utils.isValidEvent()) {
     utils.logWarning(
@@ -122,7 +129,7 @@ export async function saveCache(): Promise<void> {
 
   const startedAt = Date.now()
 
-  const cacheDirs = getCacheDirs()
+  const cacheDirs = [getLintCacheDir()]
   const primaryKey = core.getState(State.CachePrimaryKey)
   if (!primaryKey) {
     utils.logWarning(`Error retrieving key from state.`)

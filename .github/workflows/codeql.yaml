@@ -2,10 +2,14 @@ name: "Code Scanning - Action"
 
 on:
   push:
-    branches: [ master ]
+    branches:
+      - master
+      - main
   pull_request:
     # The branches below must be a subset of the branches above
-    branches: [ master ]
+    branches:
+      - master
+      - main
   schedule:
     - cron: '0 17 * * 5'
 
@@ -16,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           # Must fetch at least the immediate parents so that if this is
           # a pull request then we can checkout the head of the pull request.
@@ -31,7 +35,7 @@ jobs:
 
       # Initializes the CodeQL tools for scanning.
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v1
+        uses: github/codeql-action/init@v3
         # Override language selection by uncommenting this and choosing your languages
         with:
           language: 'javascript'
@@ -41,4 +45,4 @@ jobs:
           npm run all
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v1
+        uses: github/codeql-action/analyze@v3

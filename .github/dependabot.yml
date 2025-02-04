@@ -4,11 +4,12 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
-    reviewers:
-      - "golangci/team"
   - package-ecosystem: npm
     directory: "/"
+    groups:
+      dev-dependencies:
+        dependency-type: development
+      dependencies:
+        dependency-type: production
     schedule:
       interval: weekly
-    reviewers:
-      - "golangci/team"
